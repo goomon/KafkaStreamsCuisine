@@ -1,5 +1,6 @@
 package com.goomon.kafkastreams.streams;
 
+import com.goomon.kafkastreams.clients.producer.MockDataProducer;
 import com.goomon.kafkastreams.model.Purchase;
 import com.goomon.kafkastreams.model.PurchasePattern;
 import com.goomon.kafkastreams.model.RewardAccumulator;
@@ -27,9 +28,10 @@ import java.util.Properties;
 @SpringBootApplication
 public class ZMartKafkaStreamsApp {
 
-    private static final String TRANSACTION_TOPIC = "transactions";
-    private static final String PATTERN_TOPIC = "patterns";
-    private static final String REWARD_TOPIC = "rewards";
+    private static final String TRANSACTIONS_TOPIC = "transactions";
+    private static final String PATTERNS_TOPIC = "patterns";
+    private static final String REWARDS_TOPIC = "rewards";
+    private static final String PURCHASES_TOPIC = "purchases";
 
     public static void main(String[] args) {
         SpringApplication.run(ZMartKafkaStreamsApp.class);
@@ -46,23 +48,31 @@ public class ZMartKafkaStreamsApp {
             Serde<String> stringSerde = Serdes.String();
 
             StreamsBuilder streamsBuilder = new StreamsBuilder();
-            KStream<String, Purchase> purchaseKStream = streamsBuilder.stream(TRANSACTION_TOPIC, Consumed.with(stringSerde, purchaseSerde));
-            KStream<String, PurchasePattern> patternKStream = purchaseKStream.mapValues(p -> PurchasePattern.build(p));
-            patternKStream.print(Printed.<String, PurchasePattern>toSysOut().withLabel(PATTERN_TOPIC));
-            patternKStream.to(PATTERN_TOPIC, Produced.with(stringSerde, purchasePatternSerde));
+            KStream<String, Purchase> purchaseKStream = streamsBuilder.stream(TRANSACTIONS_TOPIC, Consumed.with(stringSerde, purchaseSerde))
+                    .mapValues(p -> Purchase.builder(p).maskCreditCard().build());
 
-            KStream<String, RewardAccumulator> rewardKStream = purchaseKStream.mapValues(p -> RewardAccumulator.build(p));
-            rewardKStream.print(Printed.<String, RewardAccumulator>toSysOut().withLabel(REWARD_TOPIC));
-            rewardKStream.to(REWARD_TOPIC, Produced.with(stringSerde, rewardAccumulatorSerde));
+            KStream<String, PurchasePattern> patternKStream = purchaseKStream.mapValues(purchase -> PurchasePattern.builder(purchase).build());
+
+            patternKStream.print(Printed.<String, PurchasePattern>toSysOut().withLabel(PATTERNS_TOPIC));
+            patternKStream.to(PATTERNS_TOPIC, Produced.with(stringSerde, purchasePatternSerde));
+
+            KStream<String, RewardAccumulator> rewardKStream = purchaseKStream.mapValues(p -> RewardAccumulator.builder(p).build());
+
+            rewardKStream.print(Printed.<String, RewardAccumulator>toSysOut().withLabel(REWARDS_TOPIC));
+            rewardKStream.to(REWARDS_TOPIC, Produced.with(stringSerde, rewardAccumulatorSerde));
+
+            purchaseKStream.print(Printed.<String, Purchase>toSysOut().withLabel(PURCHASES_TOPIC));
+            purchaseKStream.to(PURCHASES_TOPIC, Produced.with(stringSerde, purchaseSerde));
+
+            MockDataProducer.producePurchaseData();
 
             KafkaStreams kafkaStreams = new KafkaStreams(streamsBuilder.build(), streamsConfig);
             log.info("ZMart First Kafka Streams Application Started");
             kafkaStreams.start();
-
             Thread.sleep(60000);
-
             log.info("ZMart First Kafka Streams Application Shut down");
             kafkaStreams.close();
+            MockDataProducer.shutdown();
         };
     }
 
